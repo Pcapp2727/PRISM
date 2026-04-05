@@ -2,8 +2,6 @@ import type { DecisionInput, PatternSnapshot } from './types';
 
 export const ANALYSIS_VERSION = '1.0.0';
 
-// ─── System Prompts ─────────────────────────────────────────────────────────
-
 export const EVIDENCE_SYSTEM_PROMPT = `You are PRISM — a Pattern Recognition & Intelligent Strategy Mapping engine built on the combined methodologies of:
 - Tetlock (superforecasting, reference class forecasting, Brier scoring)
 - Kahneman (System 1/2, bias detection from language patterns, noise)
@@ -36,63 +34,56 @@ ABSOLUTE RULES:
 
 Respond with ONLY a valid JSON object. No markdown, no backticks, no text before or after.`;
 
-// ─── Prompt Builders ────────────────────────────────────────────────────────
-
 function buildDecisionContext(input: DecisionInput): string {
-  return [
-    `DECISION: ${input.decision}`,
-    `CONTEXT: ${input.context || 'None provided'}`,
-    `DOMAIN: ${input.domain} | STAKES: ${input.stakes} | TIMEFRAME: ${input.timeframe}`,
-    `REVERSIBILITY (user assessment): ${input.reversibility}`,
-    `STAKEHOLDERS: ${input.stakeholders || 'Not specified'}`,
-    `PRIOR ATTEMPTS: ${input.priorAttempts || 'None mentioned'}`,
-    `USER CONFIDENCE: ${input.userConfidence}%`,
-    `EMOTIONAL STATE: ${input.emotionalState}`,
-    `EXPERTISE IN DOMAIN: ${input.expertiseLevel}`,
-    `DECISION SPEED: ${input.decisionSpeed}`,
-    `USER-DEFINED KILL CRITERIA: ${input.killCriteria || 'Not defined'}`,
-  ].join('\\n');
+  const parts = [
+    "DECISION: " + input.decision,
+    "CONTEXT: " + (input.context || "None provided"),
+    "DOMAIN: " + input.domain + " | STAKES: " + input.stakes + " | TIMEFRAME: " + input.timeframe,
+    "REVERSIBILITY (user assessment): " + input.reversibility,
+    "STAKEHOLDERS: " + (input.stakeholders || "Not specified"),
+    "PRIOR ATTEMPTS: " + (input.priorAttempts || "None mentioned"),
+    "USER CONFIDENCE: " + input.userConfidence + "%",
+    "EMOTIONAL STATE: " + input.emotionalState,
+    "EXPERTISE IN DOMAIN: " + input.expertiseLevel,
+    "DECISION SPEED: " + input.decisionSpeed,
+    "USER-DEFINED KILL CRITERIA: " + (input.killCriteria || "Not defined"),
+  ];
+  return parts.join("\n");
 }
 
 function buildPatternContext(patterns: PatternSnapshot | null): string {
   if (!patterns || patterns.totalDecisions < 1) {
-    return 'INTERNAL PATTERNS: No decision history available. This is the user\\'s first logged decision.';
+    return "INTERNAL PATTERNS: No decision history available. First logged decision.";
   }
 
   const lines = [
-    `INTERNAL PATTERN DATA (${patterns.totalDecisions} logged, ${patterns.resolvedDecisions} with outcomes):`,
-    `- Overall success rate: ${patterns.successRate ?? 'N/A'}%`,
-    `- Brier calibration score: ${patterns.brierScore ?? 'Insufficient data'}/100`,
-    `- Good decisions with bad outcomes (variance): ${patterns.goodDecisionBadOutcome}`,
-    `- Bad decisions with good outcomes (luck): ${patterns.badDecisionGoodOutcome}`,
-    `- Average confidence level: ${patterns.avgConfidence}%`,
+    "INTERNAL PATTERN DATA (" + patterns.totalDecisions + " logged, " + patterns.resolvedDecisions + " with outcomes):",
+    "- Overall success rate: " + (patterns.successRate ?? "N/A") + "%",
+    "- Brier calibration score: " + (patterns.brierScore ?? "Insufficient data") + "/100",
+    "- Good decisions with bad outcomes (variance): " + patterns.goodDecisionBadOutcome,
+    "- Bad decisions with good outcomes (luck): " + patterns.badDecisionGoodOutcome,
+    "- Average confidence level: " + patterns.avgConfidence + "%",
   ];
 
   if (Object.keys(patterns.domainPerformance).length > 0) {
-    lines.push(`- Domain performance: ${JSON.stringify(patterns.domainPerformance)}`);
+    lines.push("- Domain performance: " + JSON.stringify(patterns.domainPerformance));
   }
   if (Object.keys(patterns.emotionalCorrelation).length > 0) {
-    lines.push(`- Emotional state outcomes: ${JSON.stringify(patterns.emotionalCorrelation)}`);
+    lines.push("- Emotional state outcomes: " + JSON.stringify(patterns.emotionalCorrelation));
   }
 
-  return lines.join('\\n');
+  return lines.join("\n");
 }
 
 export function buildEvidencePrompt(input: DecisionInput, patterns: PatternSnapshot | null): string {
   const dc = buildDecisionContext(input);
   const pc = buildPatternContext(patterns);
 
-  return `Analyze this decision. Return a JSON object with these exact keys.
-
-${dc}
-
-${pc}
-
-Required JSON structure:
+  return "Analyze this decision. Return a JSON object with these exact keys.\n\n" + dc + "\n\n" + pc + "\n\n" + `Required JSON structure:
 {
   "cynefin": {
     "classification": "simple" or "complicated" or "complex" or "chaotic",
-    "reasoning": "1-2 sentences explaining why this classification based on stated facts",
+    "reasoning": "1-2 sentences explaining why",
     "implication": "What this means for the decision approach"
   },
   "reference_class": {
@@ -117,7 +108,7 @@ Required JSON structure:
   "evidence": {
     "internal": {
       "patterns": ["pattern from user history relevant to this decision"],
-      "calibration_warning": "warning based on Brier score vs current confidence, or null",
+      "calibration_warning": "warning or null",
       "emotional_pattern": "how user performs in current emotional state, or null",
       "expertise_note": "how much to weight their intuition and why"
     },
@@ -136,18 +127,18 @@ Required JSON structure:
   "biases": [
     {
       "name": "cognitive bias name",
-      "signal": "EXACT phrase or framing from the user's input that triggered detection",
-      "severity": "high" or "medium" or "low",
+      "signal": "EXACT phrase from the user input that triggered detection",
+      "severity": "high or medium or low",
       "reframe": "how to restate the decision without this bias"
     }
   ],
   "noise": {
-    "changes_tomorrow": "yes" or "probably" or "no",
+    "changes_tomorrow": "yes or probably or no",
     "sources": ["factor that could produce inconsistent judgment"],
     "fix": "specific action to reduce noise"
   },
   "expertise_weight": {
-    "intuition_weight": "high" or "moderate" or "low" or "ignore",
+    "intuition_weight": "high or moderate or low or ignore",
     "reasoning": "why this weight based on expertise and domain match"
   }
 }`;
@@ -158,28 +149,23 @@ export function buildVerdictPrompt(
   evidenceData: Record<string, unknown>
 ): string {
   const dc = buildDecisionContext(input);
-  const cynefin = (evidenceData.cynefin as Record<string, string>)?.classification || 'complex';
-  const adjusted = (evidenceData.reference_class as Record<string, string>)?.adjusted_estimate || 'unknown';
-  const structure = (evidenceData.convexity as Record<string, unknown>)?.payoff_structure || 'unknown';
-  const ratio = (evidenceData.convexity as Record<string, unknown>)?.asymmetry_ratio || 'unknown';
-  const completeness = (evidenceData.evidence as Record<string, Record<string, number>>)?.gaps?.completeness ?? 'unknown';
+  const cyn = evidenceData.cynefin as Record<string, string> | undefined;
+  const rc = evidenceData.reference_class as Record<string, string> | undefined;
+  const cv = evidenceData.convexity as Record<string, unknown> | undefined;
+  const ev = evidenceData.evidence as Record<string, Record<string, unknown>> | undefined;
 
-  return `Provide decision frameworks, scenarios, and verdict based on this evidence.
+  const cynefin = cyn?.classification || "complex";
+  const adjusted = rc?.adjusted_estimate || "unknown";
+  const structure = cv?.payoff_structure || "unknown";
+  const ratio = cv?.asymmetry_ratio || "unknown";
+  const completeness = ev?.gaps?.completeness ?? "unknown";
 
-${dc}
-
-EVIDENCE SUMMARY:
-- Cynefin: ${cynefin}
-- Reference class adjusted estimate: ${adjusted}
-- Payoff structure: ${structure}, asymmetry ratio: ${ratio}
-- Information completeness: ${completeness}%
-
-Required JSON structure:
+  return "Provide decision frameworks, scenarios, and verdict based on this evidence.\n\n" + dc + "\n\nEVIDENCE SUMMARY:\n- Cynefin: " + cynefin + "\n- Reference class adjusted estimate: " + adjusted + "\n- Payoff structure: " + structure + ", asymmetry ratio: " + ratio + "\n- Information completeness: " + completeness + "%\n\n" + `Required JSON structure:
 {
   "frameworks": [
     {
       "name": "framework name",
-      "why": "evidence-based reason this framework applies to THIS decision specifically",
+      "why": "evidence-based reason this framework applies",
       "insight": "the specific insight this framework reveals",
       "action": "what this framework says to do"
     }
@@ -213,27 +199,27 @@ Required JSON structure:
       "name": "Black Swan",
       "probability": integer under 10,
       "basis": "tail risk analysis",
-      "outcome": "the unlikely but catastrophic scenario standard analysis misses",
+      "outcome": "the unlikely but catastrophic scenario",
       "signals": "early warning signs",
       "timeline": "when"
     }
   ],
   "verdict": {
-    "recommendation": "2-3 sentences. Direct. Evidence-grounded. No encouragement or hedging.",
+    "recommendation": "2-3 sentences. Direct. Evidence-grounded.",
     "confidence": integer 0-100,
     "basis": "traceable to evidence quality and completeness score",
-    "question": "the single most important question they have not asked that could change everything",
+    "question": "the single most important unasked question",
     "kill_criteria": ["specific measurable condition that should trigger reversal"],
     "triggers": {
       "proceed": "concrete condition for proceeding",
       "reconsider": "concrete condition for pausing",
       "abort": "concrete condition for stopping"
     },
-    "speed": "MOVE NOW" or "TAKE YOUR TIME" or "SET DEADLINE" or "GATHER DATA" or "DELAY IS THE DECISION",
+    "speed": "MOVE NOW or TAKE YOUR TIME or SET DEADLINE or GATHER DATA or DELAY IS THE DECISION",
     "speed_why": "1 sentence grounded in timeframe, stakes, and reversibility",
     "review": "when to revisit this decision",
     "flip": "single piece of new information that would reverse this recommendation",
-    "meta": "should you even be deciding this now, or should you delay, delegate, or make it reversible first"
+    "meta": "should you even be deciding this now"
   }
 }`;
 }
