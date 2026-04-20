@@ -10,6 +10,7 @@ import { ReliabilityDiagram } from '@/components/agents/ReliabilityDiagram';
 import { DecisionFeedRow } from '@/components/agents/DecisionFeedRow';
 import { labelBrier } from '@/lib/agent-types';
 import { CalibrationBadge } from '@/components/agents/CalibrationBadge';
+import { LogDecisionForm } from '@/components/agents/LogDecisionForm';
 
 export const dynamic = 'force-dynamic';
 
@@ -59,6 +60,11 @@ export default async function AgentDetailPage({
         )}
       </div>
 
+      {/* Log new decision */}
+      <div className="mb-8">
+        <LogDecisionForm agentId={agent.agent_id} />
+      </div>
+
       {/* Reliability chart */}
       <div className="mb-10">
         <ReliabilityDiagram
@@ -106,7 +112,7 @@ export default async function AgentDetailPage({
         </div>
         {decisions.length === 0 ? (
           <div className="border border-white/[0.06] rounded-lg p-10 text-center text-white/40 text-sm">
-            No decisions logged yet. Wire this agent into the MCP gate.
+            No decisions logged yet. Use &quot;Log New Decision&quot; above to start tracking.
           </div>
         ) : (
           <div className="space-y-2">
