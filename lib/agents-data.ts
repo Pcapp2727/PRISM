@@ -1,7 +1,8 @@
 // Server-side helpers for the Agent Intelligence layer.
-// Uses your existing Supabase client pattern (SSR + user-scoped reads).
+// Uses your existing `createServerClient()` from lib/supabase.ts (service role).
+// Single-tenant: user_id hardcoded to PRISM_USER_ID from env.
 
-import { createClient } from '@/lib/supabase/server';  // your existing SSR client
+import { createServerClient } from '@/lib/supabase';
 import type {
   AgentDecision,
   AgentFleetSummary,
@@ -12,15 +13,16 @@ import type {
 } from '@/lib/agent-types';
 import { labelBrier } from '@/lib/agent-types';
 
+// Fallback UUID if env not set — your actual Supabase auth UID.
+const USER_ID = process.env.PRISM_USER_ID ?? '9af7c6b4-7bff-458e-8509-e1392381c4e2';
+
 export async function getAgentFleet(): Promise<AgentFleetSummary[]> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return [];
+  const supabase = createServerClient();
 
   const { data: agents } = await supabase
     .from('registered_agents')
     .select('*')
-    .eq('user_id', user.id)
+    .eq('user_id', USER_ID)
     .order('created_at', { ascending: true });
 
   if (!agents || agents.length === 0) return [];
@@ -28,12 +30,12 @@ export async function getAgentFleet(): Promise<AgentFleetSummary[]> {
   const { data: calibration } = await supabase
     .from('calibration_by_agent_domain')
     .select('*')
-    .eq('user_id', user.id);
+    .eq('user_id', USER_ID);
 
   const { data: counts } = await supabase
     .from('agent_decisions')
     .select('agent_id, domain, outcome_logged_at, created_at')
-    .eq('user_id', user.id);
+    .eq('user_id', USER_ID);
 
   const rows = counts ?? [];
   const cal  = (calibration ?? []) as CalibrationRow[];
@@ -65,14 +67,12 @@ export async function getAgentFleet(): Promise<AgentFleetSummary[]> {
 }
 
 export async function getAgent(agentId: string): Promise<RegisteredAgent | null> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
+  const supabase = createServerClient();
 
   const { data } = await supabase
     .from('registered_agents')
     .select('*')
-    .eq('user_id', user.id)
+    .eq('user_id', USER_ID)
     .eq('agent_id', agentId)
     .single();
 
@@ -80,14 +80,12 @@ export async function getAgent(agentId: string): Promise<RegisteredAgent | null>
 }
 
 export async function getAgentCalibration(agentId: string): Promise<CalibrationRow[]> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return [];
+  const supabase = createServerClient();
 
   const { data } = await supabase
     .from('calibration_by_agent_domain')
     .select('*')
-    .eq('user_id', user.id)
+    .eq('user_id', USER_ID)
     .eq('agent_id', agentId)
     .order('n', { ascending: false });
 
@@ -98,14 +96,12 @@ export async function getAgentDecisions(
   agentId: string,
   limit = 50,
 ): Promise<AgentDecision[]> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return [];
+  const supabase = createServerClient();
 
   const { data } = await supabase
     .from('agent_decisions')
     .select('*')
-    .eq('user_id', user.id)
+    .eq('user_id', USER_ID)
     .eq('agent_id', agentId)
     .order('created_at', { ascending: false })
     .limit(limit);
@@ -117,21 +113,19 @@ export async function getDecisionWithTraces(decisionId: string): Promise<{
   decision: AgentDecision | null;
   traces: ReasoningTrace[];
 }> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { decision: null, traces: [] };
+  const supabase = createServerClient();
 
   const [decRes, trcRes] = await Promise.all([
     supabase
       .from('agent_decisions')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', USER_ID)
       .eq('id', decisionId)
       .single(),
     supabase
       .from('reasoning_traces')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', USER_ID)
       .eq('agent_decision_id', decisionId)
       .order('created_at', { ascending: true }),
   ]);
@@ -142,10 +136,6 @@ export async function getDecisionWithTraces(decisionId: string): Promise<{
   };
 }
 
-/**
- * Compute reliability diagram across this user's resolved decisions.
- * Filter by agent_id and/or domain optionally.
- */
 export async function getReliabilityDiagram(opts: {
   agentId?: string;
   domain?:  string;
@@ -155,9 +145,7 @@ export async function getReliabilityDiagram(opts: {
   mean_brier: number | null;
   buckets: ReliabilityBucket[];
 }> {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return { sample_size: 0, mean_brier: null, buckets: [] };
+  const supabase = createServerClient();
 
   const lookbackDays = opts.lookbackDays ?? 180;
   const cutoff = new Date(Date.now() - lookbackDays * 86_400_000).toISOString();
@@ -165,7 +153,7 @@ export async function getReliabilityDiagram(opts: {
   let query = supabase
     .from('agent_decisions')
     .select('brier_score, predicted_outcome, actual_outcome')
-    .eq('user_id', user.id)
+    .eq('user_id', USER_ID)
     .not('brier_score', 'is', null)
     .gte('created_at', cutoff);
   if (opts.agentId) query = query.eq('agent_id', opts.agentId);
