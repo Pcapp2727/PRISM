@@ -1,7 +1,7 @@
 // Bridge helpers — connect PRISM decisions ⇄ agent_decisions.
-// Reads the PRISM decisions table (your personal journal) and checks which
-// have already been promoted into the agent fleet.
+// v1.2 — adds explicit cache revalidation.
 
+import { unstable_noStore as noStore } from 'next/cache';
 import { createServerClient } from '@/lib/supabase';
 
 const USER_ID = process.env.PRISM_USER_ID ?? '9af7c6b4-7bff-458e-8509-e1392381c4e2';
@@ -9,22 +9,16 @@ const USER_ID = process.env.PRISM_USER_ID ?? '9af7c6b4-7bff-458e-8509-e1392381c4
 export interface PrismDecisionSummary {
   id: string;
   created_at: string;
-  decision_text: string;          // "dec" — the decision itself
+  decision_text: string;
   domain: string | null;
   verdict_recommendation: string | null;
-  verdict_confidence: number | null;   // 0-100 from Claude's analysis
+  verdict_confidence: number | null;
   outcome_logged: boolean;
-
-  // Bridge status
   already_tracked: boolean;
   linked_agent_decision_id: string | null;
   linked_agent_id: string | null;
 }
 
-/**
- * PRISM's decisions table has varied over versions. This helper normalizes
- * field access so the bridge keeps working even if column names shift.
- */
 function extractField(row: Record<string, unknown>, candidates: string[]): unknown {
   for (const key of candidates) {
     if (row[key] !== undefined && row[key] !== null) return row[key];
@@ -36,12 +30,9 @@ function extractVerdict(analysis: unknown): { recommendation: string | null; con
   if (!analysis || typeof analysis !== 'object') return { recommendation: null, confidence: null };
   const a = analysis as Record<string, unknown>;
   const v = (a.verdict ?? {}) as Record<string, unknown>;
-
   const rec = (v.recommendation ?? v.rec) as string | undefined;
-  // Both field names appear across PRISM versions
   const conf = (v.confidence_level ?? v.confidence ?? v.conf) as number | string | undefined;
   const confNum = typeof conf === 'number' ? conf : (conf ? Number(conf) : null);
-
   return {
     recommendation: rec ?? null,
     confidence: confNum !== null && !Number.isNaN(confNum) ? confNum : null,
@@ -49,9 +40,9 @@ function extractVerdict(analysis: unknown): { recommendation: string | null; con
 }
 
 export async function getRecentPrismDecisions(limit = 30): Promise<PrismDecisionSummary[]> {
+  noStore();
   const supabase = createServerClient();
 
-  // Pull recent PRISM decisions
   const { data: decisions, error } = await supabase
     .from('decisions')
     .select('*')
@@ -61,7 +52,6 @@ export async function getRecentPrismDecisions(limit = 30): Promise<PrismDecision
 
   if (error || !decisions) return [];
 
-  // Check which ones are already bridged
   const ids = decisions.map((d: Record<string, unknown>) => d.id as string);
   const { data: bridged } = await supabase
     .from('agent_decisions')
@@ -99,8 +89,8 @@ export async function getRecentPrismDecisions(limit = 30): Promise<PrismDecision
   });
 }
 
-/** Count untracked PRISM decisions — used for the banner on /agents. */
 export async function countUntrackedDecisions(): Promise<number> {
+  noStore();
   const recent = await getRecentPrismDecisions(50);
   return recent.filter(d => !d.already_tracked).length;
 }

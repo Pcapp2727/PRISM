@@ -1,7 +1,9 @@
 // Server-side helpers for the Agent Intelligence layer.
-// Uses your existing `createServerClient()` from lib/supabase.ts (service role).
-// Single-tenant: user_id hardcoded to PRISM_USER_ID from env.
+// v1.2 — adds explicit cache revalidation to force fresh reads on every request.
+// Supabase responses were being cached by Vercel's Data Cache even with
+// `dynamic = 'force-dynamic'` on the page. This file fixes that.
 
+import { unstable_noStore as noStore } from 'next/cache';
 import { createServerClient } from '@/lib/supabase';
 import type {
   AgentDecision,
@@ -13,18 +15,16 @@ import type {
 } from '@/lib/agent-types';
 import { labelBrier } from '@/lib/agent-types';
 
-// Fallback UUID if env not set — your actual Supabase auth UID.
 const USER_ID = process.env.PRISM_USER_ID ?? '9af7c6b4-7bff-458e-8509-e1392381c4e2';
 
 export async function getAgentFleet(): Promise<AgentFleetSummary[]> {
+  noStore();
   const supabase = createServerClient();
-
   const { data: agents } = await supabase
     .from('registered_agents')
     .select('*')
     .eq('user_id', USER_ID)
     .order('created_at', { ascending: true });
-
   if (!agents || agents.length === 0) return [];
 
   const { data: calibration } = await supabase
@@ -41,18 +41,15 @@ export async function getAgentFleet(): Promise<AgentFleetSummary[]> {
   const cal  = (calibration ?? []) as CalibrationRow[];
 
   return (agents as RegisteredAgent[]).map(agent => {
-    const mine       = rows.filter(r => r.agent_id === agent.agent_id);
-    const resolved   = mine.filter(r => r.outcome_logged_at).length;
-    const domainCal  = cal.filter(c => c.agent_id === agent.agent_id);
-    const totalN     = domainCal.reduce((s, c) => s + c.n, 0);
-    const weighted   = totalN > 0
+    const mine      = rows.filter(r => r.agent_id === agent.agent_id);
+    const resolved  = mine.filter(r => r.outcome_logged_at).length;
+    const domainCal = cal.filter(c => c.agent_id === agent.agent_id);
+    const totalN    = domainCal.reduce((s, c) => s + c.n, 0);
+    const weighted  = totalN > 0
       ? domainCal.reduce((s, c) => s + c.mean_brier * c.n, 0) / totalN
       : null;
-    const lastAt     = mine.length > 0
-      ? mine.map(m => m.created_at).sort().reverse()[0]
-      : null;
-    const domains    = Array.from(new Set(mine.map(m => m.domain)));
-
+    const lastAt    = mine.length > 0 ? mine.map(m => m.created_at).sort().reverse()[0] : null;
+    const domains   = Array.from(new Set(mine.map(m => m.domain)));
     return {
       agent,
       total_decisions:    mine.length,
@@ -67,37 +64,32 @@ export async function getAgentFleet(): Promise<AgentFleetSummary[]> {
 }
 
 export async function getAgent(agentId: string): Promise<RegisteredAgent | null> {
+  noStore();
   const supabase = createServerClient();
-
   const { data } = await supabase
     .from('registered_agents')
     .select('*')
     .eq('user_id', USER_ID)
     .eq('agent_id', agentId)
     .single();
-
   return data as RegisteredAgent | null;
 }
 
 export async function getAgentCalibration(agentId: string): Promise<CalibrationRow[]> {
+  noStore();
   const supabase = createServerClient();
-
   const { data } = await supabase
     .from('calibration_by_agent_domain')
     .select('*')
     .eq('user_id', USER_ID)
     .eq('agent_id', agentId)
     .order('n', { ascending: false });
-
   return (data ?? []) as CalibrationRow[];
 }
 
-export async function getAgentDecisions(
-  agentId: string,
-  limit = 50,
-): Promise<AgentDecision[]> {
+export async function getAgentDecisions(agentId: string, limit = 50): Promise<AgentDecision[]> {
+  noStore();
   const supabase = createServerClient();
-
   const { data } = await supabase
     .from('agent_decisions')
     .select('*')
@@ -105,7 +97,6 @@ export async function getAgentDecisions(
     .eq('agent_id', agentId)
     .order('created_at', { ascending: false })
     .limit(limit);
-
   return (data ?? []) as AgentDecision[];
 }
 
@@ -113,23 +104,12 @@ export async function getDecisionWithTraces(decisionId: string): Promise<{
   decision: AgentDecision | null;
   traces: ReasoningTrace[];
 }> {
+  noStore();
   const supabase = createServerClient();
-
   const [decRes, trcRes] = await Promise.all([
-    supabase
-      .from('agent_decisions')
-      .select('*')
-      .eq('user_id', USER_ID)
-      .eq('id', decisionId)
-      .single(),
-    supabase
-      .from('reasoning_traces')
-      .select('*')
-      .eq('user_id', USER_ID)
-      .eq('agent_decision_id', decisionId)
-      .order('created_at', { ascending: true }),
+    supabase.from('agent_decisions').select('*').eq('user_id', USER_ID).eq('id', decisionId).single(),
+    supabase.from('reasoning_traces').select('*').eq('user_id', USER_ID).eq('agent_decision_id', decisionId).order('created_at', { ascending: true }),
   ]);
-
   return {
     decision: decRes.data as AgentDecision | null,
     traces:   (trcRes.data ?? []) as ReasoningTrace[],
@@ -145,11 +125,10 @@ export async function getReliabilityDiagram(opts: {
   mean_brier: number | null;
   buckets: ReliabilityBucket[];
 }> {
+  noStore();
   const supabase = createServerClient();
-
   const lookbackDays = opts.lookbackDays ?? 180;
   const cutoff = new Date(Date.now() - lookbackDays * 86_400_000).toISOString();
-
   let query = supabase
     .from('agent_decisions')
     .select('brier_score, predicted_outcome, actual_outcome')
@@ -162,11 +141,9 @@ export async function getReliabilityDiagram(opts: {
   const { data } = await query;
   const rows = data ?? [];
   const n = rows.length;
-
   if (n === 0) return { sample_size: 0, mean_brier: null, buckets: [] };
 
   const meanBrier = rows.reduce((s, d) => s + (d.brier_score ?? 0), 0) / n;
-
   const buckets: ReliabilityBucket[] = [0, 0.2, 0.4, 0.6, 0.8].map((lo, i) => {
     const hi = lo + 0.2;
     const isLast = i === 4;
@@ -175,12 +152,10 @@ export async function getReliabilityDiagram(opts: {
       return p >= lo && (isLast ? p <= 1.0 : p < hi);
     });
     const avgPred = inBucket.length
-      ? inBucket.reduce((s, d) =>
-          s + (((d.predicted_outcome as { probability?: number })?.probability) ?? 0), 0) / inBucket.length
+      ? inBucket.reduce((s, d) => s + (((d.predicted_outcome as { probability?: number })?.probability) ?? 0), 0) / inBucket.length
       : null;
     const actRate = inBucket.length
-      ? inBucket.filter(d =>
-          ((d.actual_outcome as { succeeded?: boolean })?.succeeded) === true).length / inBucket.length
+      ? inBucket.filter(d => ((d.actual_outcome as { succeeded?: boolean })?.succeeded) === true).length / inBucket.length
       : null;
     return {
       predicted_range: `${lo.toFixed(1)}-${hi.toFixed(1)}`,
@@ -190,9 +165,5 @@ export async function getReliabilityDiagram(opts: {
     };
   });
 
-  return {
-    sample_size: n,
-    mean_brier:  Number(meanBrier.toFixed(4)),
-    buckets,
-  };
+  return { sample_size: n, mean_brier: Number(meanBrier.toFixed(4)), buckets };
 }
